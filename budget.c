@@ -39,38 +39,36 @@ typedef enum {
 
 // String IDs for multi-language support
 typedef enum {
-    STR_TITLE = 0,
-    STR_ADD_TRANSACTION,
-    STR_VIEW_TRANSACTIONS,
-    STR_VIEW_SUMMARY,
-    STR_SETTINGS,
-    STR_SAVE_EXIT,
-    STR_ENTER_CHOICE,
-    STR_INVALID_CHOICE,
-    STR_TRANSACTION_ADDED,
-    STR_TYPE_PROMPT,
-    STR_AMOUNT_PROMPT,
-    STR_CURRENCY_PROMPT,
-    STR_CATEGORY_PROMPT,
-    STR_CATEGORY_OPTIONS,
-    STR_DESCRIPTION_PROMPT,
-    STR_ALL_TRANSACTIONS,
-    STR_NO_TRANSACTIONS,
-    STR_TOTAL_INCOME,
-    STR_TOTAL_EXPENSES,
-    STR_BALANCE,
-    STR_SETTINGS_MENU,
-    STR_CHANGE_LANGUAGE,
-    STR_CHANGE_CURRENCY,
-    STR_BACK_TO_MENU,
-    STR_CURRENT_LANGUAGE,
-    STR_ENGLISH,
-    STR_BULGARIAN,
-    STR_SELECT_LANGUAGE,
-    STR_CURRENT_CURRENCY,
-    STR_SELECT_CURRENCY,
-    STR_DATA_SAVED,
-    STR_PRESS_ENTER
+    TITLE = 0,
+    ADD_TRANSACTION,
+    VIEW_TRANSACTIONS,
+    VIEW_SUMMARY,
+    SETTINGS,
+    SAVE_EXIT,
+    ENTER_CHOICE,
+    INVALID_CHOICE,
+    TRANSACTION_ADDED,
+    TYPE_PROMPT,
+    AMOUNT_PROMPT,
+    CURRENCY_PROMPT,
+    CATEGORY_PROMPT,
+    CATEGORY_OPTIONS,
+    DESCRIPTION_PROMPT,
+    ALL_TRANSACTIONS,
+    NO_TRANSACTIONS,
+    TOTAL_INCOME,
+    TOTAL_EXPENSES,
+    BALANCE,
+    SETTINGS_MENU,
+    CHANGE_LANGUAGE,
+    BACK_TO_MENU,
+    CURRENT_LANGUAGE,
+    LANG_ENGLISH,
+    LANG_BULGARIAN,
+    SELECT_LANGUAGE,
+    DATA_SAVED,
+    PRESS_ENTER,
+    INVALID_INPUT
 } StringID;
 
 // Transaction structure
@@ -81,13 +79,11 @@ typedef struct {
     Currency currency;
     TransactionType type;
     Category category;
-    char description[MAX_STRING];
 } Transaction;
 
 // User settings structure
 typedef struct {
     Language language;
-    Currency default_currency;
 } UserSettings;
 
 // Global variables
@@ -119,16 +115,14 @@ const char* menu_strings[][2] = {
     {"Balance:", "Баланс:"},
     {"Settings Menu", "Меню Настройки"},
     {"1. Change Language", "1. Смени Език"},
-    {"2. Change Default Currency", "2. Смени Валута по Подразбиране"},
-    {"3. Back to Main Menu", "3. Обратно към Главното Меню"},
+    {"2. Back to Main Menu", "2. Обратно към Главното Меню"},
     {"Current Language: ", "Текущ Език: "},
     {"English", "Английски"},
     {"Bulgarian", "Български"},
     {"Select language (0=English, 1=Bulgarian): ", "Избери език (0=Английски, 1=Български): "},
-    {"Current Default Currency: ", "Текуща Валута: "},
-    {"Select currency (0=EUR, 1=BGN): ", "Избери валута (0=EUR, 1=BGN): "},
     {"Data saved successfully!", "Данните са запазени успешно!"},
-    {"Press Enter to continue...", "Натисни Enter за да продължиш..."}
+    {"\nPress Enter to continue...", "\nНатисни Enter за да продължиш..."},
+    {"Invalid input!", "Невалидни данни!"}
 };
 
 // Category names
@@ -167,12 +161,12 @@ int main(void) {
     while (1) {
         clear_screen();
         print_menu();
-        printf("%s", get_string(6));
+        printf("%s", get_string(ENTER_CHOICE));
         
         if (scanf("%d", &choice) != 1) {
             while(getchar() != '\n'); // Clear input buffer
-            printf("%s\n", get_string(7));
-            printf("%s", get_string(33));
+            printf("%s\n", get_string(INVALID_CHOICE));
+            printf("%s", get_string(PRESS_ENTER));
             getchar();
             continue;
         }
@@ -193,13 +187,11 @@ int main(void) {
                 break;
             case 5:
                 save_data();
-                printf("%s\n", get_string(32));
                 return 0;
             default:
-                printf("%s\n", get_string(7));
+                printf("%s\n", get_string(INVALID_CHOICE));
+                printf("%s", get_string(PRESS_ENTER));
         }
-        
-        printf("\n%s", get_string(33));
         getchar();
     }
     
@@ -208,12 +200,11 @@ int main(void) {
 
 void initialize_settings() {
     settings.language = ENGLISH;
-    settings.default_currency = BGN;
     
     // Try to load settings from config file
     FILE* file = fopen(CONFIG_FILE, "r");
     if (file != NULL) {
-        fscanf(file, "%d %d", (int*)&settings.language, (int*)&settings.default_currency);
+        fscanf(file, "%d", (int*)&settings.language);
         fclose(file);
     }
 }
@@ -221,7 +212,7 @@ void initialize_settings() {
 void save_settings() {
     FILE* file = fopen(CONFIG_FILE, "w");
     if (file != NULL) {
-        fprintf(file, "%d %d\n", settings.language, settings.default_currency);
+        fprintf(file, "%d\n", settings.language);
         fclose(file);
     }
 }
@@ -233,14 +224,13 @@ void load_data() {
     }
     
     transaction_count = 0;
-    while (fscanf(file, "%d %s %f %d %d %d %[^\n]", 
+    while (fscanf(file, "%d %s %f %d %d %d", 
                   &transactions[transaction_count].id,
                   transactions[transaction_count].date,
                   &transactions[transaction_count].amount,
                   (int*)&transactions[transaction_count].currency,
                   (int*)&transactions[transaction_count].type,
-                  (int*)&transactions[transaction_count].category,
-                  transactions[transaction_count].description) == 7) {
+                  (int*)&transactions[transaction_count].category) == 6) {
         transaction_count++;
         if (transaction_count >= MAX_TRANSACTIONS) break;
     }
@@ -256,14 +246,13 @@ void save_data() {
     }
     
     for (int i = 0; i < transaction_count; i++) {
-        fprintf(file, "%d %s %.2f %d %d %d %s\n",
+        fprintf(file, "%d %s %.2f %d %d %d\n",
                 transactions[i].id,
                 transactions[i].date,
                 transactions[i].amount,
                 transactions[i].currency,
                 transactions[i].type,
-                transactions[i].category,
-                transactions[i].description);
+                transactions[i].category);
     }
     
     fclose(file);
@@ -283,14 +272,14 @@ const char* get_string(StringID id) {
 }
 
 void print_menu() {
-    printf("╔════════════════════════════════════════╗\n");
-    printf("║  %s  ║\n", get_string(STR_TITLE));
-    printf("╚════════════════════════════════════════╝\n\n");
-    printf("%s\n", get_string(STR_ADD_TRANSACTION));
-    printf("%s\n", get_string(STR_VIEW_TRANSACTIONS));
-    printf("%s\n", get_string(STR_VIEW_SUMMARY));
-    printf("%s\n", get_string(STR_SETTINGS));
-    printf("%s\n\n", get_string(STR_SAVE_EXIT));
+    printf("\n══════════════════════════════════════════════════\n");
+    printf("  %s\n", get_string(TITLE));
+    printf("══════════════════════════════════════════════════\n\n");
+    printf("%s\n", get_string(ADD_TRANSACTION));
+    printf("%s\n", get_string(VIEW_TRANSACTIONS));
+    printf("%s\n", get_string(VIEW_SUMMARY));
+    printf("%s\n", get_string(SETTINGS));
+    printf("%s\n\n", get_string(SAVE_EXIT));
 }
 
 void get_current_date(char* buffer) {
@@ -300,10 +289,9 @@ void get_current_date(char* buffer) {
 }
 
 void add_transaction() {
-    clear_screen();
-    
     if (transaction_count >= MAX_TRANSACTIONS) {
-        printf("Transaction limit reached!\n");
+        printf("%s\n", get_string(INVALID_INPUT));
+        printf("%s\n", get_string(PRESS_ENTER));
         return;
     }
     
@@ -311,57 +299,101 @@ void add_transaction() {
     new_trans.id = transaction_count + 1;
     get_current_date(new_trans.date);
     
+    printf("\n%s", get_string(TYPE_PROMPT));
     int type_input;
-    printf("%s", get_string(STR_TYPE_PROMPT));
-    scanf("%d", &type_input);
+    while (1){
+    if (scanf("%d", &type_input) != 1 || (type_input != 0 && type_input != 1))
+    {
+        while (getchar() != '\n');
+        printf("%s\n", get_string(INVALID_INPUT));
+        printf("%s", get_string(TYPE_PROMPT));
+        continue;
+    }
+
+        break;
+
+}
     new_trans.type = (TransactionType)type_input;
     
-    printf("%s", get_string(STR_AMOUNT_PROMPT));
-    scanf("%f", &new_trans.amount);
+    printf("%s", get_string(AMOUNT_PROMPT));
+
+    while (1){
+    if (scanf("%f", &new_trans.amount) != 1 || new_trans.amount <= 0)
+    {
+        while (getchar() != '\n');
+        printf("%s\n", get_string(INVALID_INPUT));
+        printf("%s", get_string(AMOUNT_PROMPT));
+        continue;
+    }
+    break;
+}
     
-    int curr_input;
-    printf("%s", get_string(STR_CURRENCY_PROMPT));
-    scanf("%d", &curr_input);
-    new_trans.currency = (Currency)curr_input;
+    printf("%s", get_string(CURRENCY_PROMPT));
+
+int curr_input;
+
+while (1){
+    if (scanf("%d", &curr_input) != 1 ||
+        (curr_input != 0 && curr_input != 1))
+    {
+        while (getchar() != '\n');
+        printf("%s\n", get_string(INVALID_INPUT));
+        printf("%s", get_string(CURRENCY_PROMPT));
+        continue;
+    }
+     break;
+}
+new_trans.currency = (Currency) curr_input;
     
-    printf("\n%s\n", get_string(STR_CATEGORY_PROMPT));
-    printf("%s\n", get_string(STR_CATEGORY_OPTIONS));
-    int cat_input;
-    scanf("%d", &cat_input);
-    new_trans.category = (Category)cat_input;
+printf("\n%s\n", get_string(CATEGORY_PROMPT));
+printf("%s\n", get_string(CATEGORY_OPTIONS));
+int cat_input;
+
+while (1){
+    if (scanf("%d", &cat_input) != 1 ||
+        cat_input < 0 || cat_input > 5)
+    {
+        while (getchar() != '\n');
+        printf("%s\n", get_string(INVALID_INPUT));
+        printf("\n%s\n", get_string(CATEGORY_PROMPT));
+        printf("%s\n", get_string(CATEGORY_OPTIONS));
+        continue;
+    }
+    break;
+}
+new_trans.category = (Category) cat_input;
     
-    while(getchar() != '\n'); // Clear buffer
-    printf("%s", get_string(STR_DESCRIPTION_PROMPT));
-    fgets(new_trans.description, MAX_STRING, stdin);
-    new_trans.description[strcspn(new_trans.description, "\n")] = 0; // Remove newline
-    
-    transactions[transaction_count++] = new_trans;
-    
-    printf("\n%s\n", get_string(STR_TRANSACTION_ADDED));
+while(getchar() != '\n');
+
+transactions[transaction_count++] = new_trans;
+
+printf("\n%s\n", get_string(TRANSACTION_ADDED));
+printf("%s\n", get_string(PRESS_ENTER));
 }
 
 void view_transactions() {
-    clear_screen();
+    printf("\n═══════════════════════════════════════════════════════════════\n");
+    printf("%s\n", get_string(ALL_TRANSACTIONS));
     printf("═══════════════════════════════════════════════════════════════\n");
-    printf("%s\n", get_string(STR_ALL_TRANSACTIONS));
-    printf("═══════════════════════════════════════════════════════════════\n\n");
     
     if (transaction_count == 0) {
-        printf("%s\n", get_string(STR_NO_TRANSACTIONS));
+        printf("%s\n", get_string(NO_TRANSACTIONS));
+        printf("%s\n", get_string(PRESS_ENTER));
         return;
     }
     
     for (int i = 0; i < transaction_count; i++) {
         Transaction t = transactions[i];
-        printf("[%d] %s | %.2f %s | %s | %s\n",
+        printf("\n[%d] %s | %.2f %s | %s | %s",
                t.id,
                t.date,
                t.amount,
                currency_symbols[t.currency],
                t.type == INCOME ? "+" : "-",
                category_names[t.category][settings.language]);
-        printf("    %s\n\n", t.description);
     }
+    printf("\n");
+    printf("%s\n", get_string(PRESS_ENTER));
 }
 
 float convert_currency(float amount, Currency from, Currency to) {
@@ -375,10 +407,10 @@ float convert_currency(float amount, Currency from, Currency to) {
 }
 
 void view_summary() {
-    clear_screen();
+    printf("\n═══════════════════════════════════════════════════════════════\n");
+    const char* summary_title = (settings.language == ENGLISH) ? "Summary" : "Обобщение";
+    printf("%s\n", summary_title);
     printf("═══════════════════════════════════════════════════════════════\n");
-    printf("%s\n", get_string(STR_VIEW_SUMMARY));
-    printf("═══════════════════════════════════════════════════════════════\n\n");
     
     float total_income_eur = 0, total_expense_eur = 0;
     
@@ -396,38 +428,40 @@ void view_summary() {
     
     float balance = total_income_eur - total_expense_eur;
     
-    // Display in both currencies
-    printf("%s %.2f EUR (%.2f BGN)\n", get_string(STR_TOTAL_INCOME), 
+    printf("\n%s %.2f EUR (%.2f BGN)\n", get_string(TOTAL_INCOME), 
            total_income_eur, 
            convert_currency(total_income_eur, EUR, BGN));
     
-    printf("%s %.2f EUR (%.2f BGN)\n", get_string(STR_TOTAL_EXPENSES), 
+    printf("%s %.2f EUR (%.2f BGN)\n", get_string(TOTAL_EXPENSES), 
            total_expense_eur, 
            convert_currency(total_expense_eur, EUR, BGN));
     
-    printf("\n%s %.2f EUR (%.2f BGN)\n", get_string(STR_BALANCE), 
+    printf("\n%s %.2f EUR (%.2f BGN)\n", get_string(BALANCE), 
            balance, 
            convert_currency(balance, EUR, BGN));
     
-    // Show percentage breakdown by category
-    printf("\n--- Expenses by Category ---\n");
-    for (int cat = 0; cat < 6; cat++) {
-        float cat_total = 0;
-        for (int i = 0; i < transaction_count; i++) {
-            if (transactions[i].type == EXPENSE && transactions[i].category == cat) {
-                cat_total += convert_currency(transactions[i].amount, 
-                                             transactions[i].currency, 
-                                             EUR);
+    if (total_expense_eur > 0) {
+        const char* expenses_title = (settings.language == ENGLISH) ? "\n--- Expenses by Category ---\n" : "\n--- Разходи по категория ---\n";
+        printf("%s\n", expenses_title);
+        for (int cat = 0; cat < 6; cat++) {
+            float cat_total = 0;
+            for (int i = 0; i < transaction_count; i++) {
+                if (transactions[i].type == EXPENSE && transactions[i].category == cat) {
+                    cat_total += convert_currency(transactions[i].amount, 
+                                                 transactions[i].currency, 
+                                                 EUR);
+                }
+            }
+            if (cat_total > 0) {
+                float percentage = (cat_total / total_expense_eur) * 100;
+                printf("%s: %.2f EUR (%.1f%%)\n", 
+                       category_names[cat][settings.language], 
+                       cat_total, 
+                       percentage);
             }
         }
-        if (cat_total > 0) {
-            float percentage = (cat_total / total_expense_eur) * 100;
-            printf("%s: %.2f EUR (%.1f%%)\n", 
-                   category_names[cat][settings.language], 
-                   cat_total, 
-                   percentage);
-        }
     }
+    printf("%s\n", get_string(PRESS_ENTER));
 }
 
 void settings_menu() {
@@ -436,48 +470,48 @@ void settings_menu() {
     while (1) {
         clear_screen();
         printf("═══════════════════════════════════════\n");
-        printf("%s\n", get_string(STR_SETTINGS_MENU));
+        printf("%s\n", get_string(SETTINGS_MENU));
         printf("═══════════════════════════════════════\n\n");
-        printf("%s\n", get_string(STR_CHANGE_LANGUAGE));
-        printf("%s\n", get_string(STR_CHANGE_CURRENCY));
-        printf("%s\n\n", get_string(STR_BACK_TO_MENU));
+        printf("%s\n", get_string(CHANGE_LANGUAGE));
+        printf("%s\n\n", get_string(BACK_TO_MENU));
         
-        printf("%s%s\n", get_string(STR_CURRENT_LANGUAGE), 
-               get_string(STR_ENGLISH + settings.language));
-        printf("%s%s\n", get_string(STR_CURRENT_CURRENCY), 
-               currency_symbols[settings.default_currency]);
+        printf("%s%s\n", get_string(CURRENT_LANGUAGE), 
+               get_string(LANG_ENGLISH + settings.language));
         printf("Exchange Rate: 1 EUR = %.5f BGN (Fixed)\n\n", EXCHANGE_RATE);
         
-        printf("%s", get_string(STR_ENTER_CHOICE));
-        scanf("%d", &choice);
+        printf("%s", get_string(ENTER_CHOICE));
+        if (scanf("%d", &choice) != 1) {
+            while(getchar() != '\n');
+            printf("%s\n", get_string(INVALID_CHOICE));
+            printf("%s", get_string(PRESS_ENTER));
+            getchar();
+            continue;
+        }
         while(getchar() != '\n');
         
         switch(choice) {
             case 1: {
                 int lang;
-                printf("%s", get_string(STR_SELECT_LANGUAGE));
-                scanf("%d", &lang);
-                while(getchar() != '\n');
-                if (lang == 0 || lang == 1) {
+                printf("%s", get_string(SELECT_LANGUAGE));
+                if (scanf("%d", &lang) != 1 || (lang != 0 && lang != 1)) {
+                    while(getchar() != '\n');
+                    printf("%s\n", get_string(INVALID_INPUT));
+                    printf("%s", get_string(PRESS_ENTER));
+                    getchar();
+                } else {
+                    while(getchar() != '\n');
                     settings.language = (Language)lang;
                 }
                 break;
             }
-            case 2: {
-                int curr;
-                printf("%s", get_string(STR_SELECT_CURRENCY));
-                scanf("%d", &curr);
-                while(getchar() != '\n');
-                if (curr == 0 || curr == 1) {
-                    settings.default_currency = (Currency)curr;
-                }
-                break;
-            }
-            case 3:
+            case 2:
                 save_settings();
+                printf("%s", get_string(PRESS_ENTER));
                 return;
             default:
-                printf("%s\n", get_string(STR_INVALID_CHOICE));
+                printf("%s\n", get_string(INVALID_CHOICE));
+                printf("%s", get_string(PRESS_ENTER));
+                getchar();
         }
     }
 }
