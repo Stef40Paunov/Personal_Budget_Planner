@@ -151,6 +151,7 @@ void settings_menu();
 const char* get_string(StringID id);
 void get_current_date(char* buffer);
 float convert_currency(float amount, Currency from, Currency to);
+void wait_for_enter(void);
 
 int main(void) {
     initialize_settings();
@@ -167,7 +168,7 @@ int main(void) {
             while(getchar() != '\n'); // Clear input buffer
             printf("%s\n", get_string(INVALID_CHOICE));
             printf("%s", get_string(PRESS_ENTER));
-            getchar();
+            wait_for_enter();
             continue;
         }
         while(getchar() != '\n'); // Clear newline
@@ -191,8 +192,9 @@ int main(void) {
             default:
                 printf("%s\n", get_string(INVALID_CHOICE));
                 printf("%s", get_string(PRESS_ENTER));
+                break;
         }
-        getchar();
+        wait_for_enter();        
     }
     
     return 0;
@@ -292,6 +294,7 @@ void add_transaction() {
     if (transaction_count >= MAX_TRANSACTIONS) {
         printf("%s\n", get_string(INVALID_INPUT));
         printf("%s\n", get_string(PRESS_ENTER));
+
         return;
     }
     
@@ -484,7 +487,7 @@ void settings_menu() {
             while(getchar() != '\n');
             printf("%s\n", get_string(INVALID_CHOICE));
             printf("%s", get_string(PRESS_ENTER));
-            getchar();
+            wait_for_enter();
             continue;
         }
         while(getchar() != '\n');
@@ -497,7 +500,7 @@ void settings_menu() {
                     while(getchar() != '\n');
                     printf("%s\n", get_string(INVALID_INPUT));
                     printf("%s", get_string(PRESS_ENTER));
-                    getchar();
+                    wait_for_enter();
                 } else {
                     while(getchar() != '\n');
                     settings.language = (Language)lang;
@@ -511,7 +514,11 @@ void settings_menu() {
             default:
                 printf("%s\n", get_string(INVALID_CHOICE));
                 printf("%s", get_string(PRESS_ENTER));
-                getchar();
+                wait_for_enter();
         }
     }
+}
+void wait_for_enter() {
+    int c;
+    while ((c = getchar()) != '\n' && c != EOF);
 }
