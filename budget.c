@@ -68,8 +68,29 @@ typedef enum {
     SELECT_LANGUAGE,
     DATA_SAVED,
     PRESS_ENTER,
-    INVALID_INPUT
+    INVALID_INPUT,
+    FILTER_CHOICE,
+    SHOW_ALL_OPTION,
+    FILTER_OPTION,
+    ENTER_FROM_YEAR,
+    ENTER_FROM_MONTH,
+    ENTER_FROM_DAY,
+    ENTER_TO_YEAR,
+    ENTER_TO_MONTH,
+    ENTER_TO_DAY,
+    END_DATE_BEFORE_START,
+    ID_TEXT,
+    DATE_TEXT,
+    AMOUNT_TEXT,
+    TYPE_TEXT,
+    CATEGORY_TEXT,
+    INVALID_DATE
 } StringID;
+
+typedef enum {
+    SHOW_ALL = 0,
+    FILTER_BY_DATE = 1
+} ViewMode;
 
 // Transaction structure
 typedef struct {
@@ -85,6 +106,11 @@ typedef struct {
 typedef struct {
     Language language;
 } UserSettings;
+
+typedef struct {
+    int from_year, from_month, from_day;
+    int to_year, to_month, to_day;
+} DateRange;
 
 // Global variables
 Transaction transactions[MAX_TRANSACTIONS];
@@ -122,7 +148,23 @@ const char* menu_strings[][2] = {
     {"Select language (0=English, 1=Bulgarian): ", "Избери език (0=Английски, 1=Български): "},
     {"Data saved successfully!", "Данните са запазени успешно!"},
     {"\nPress Enter to continue...", "\nНатисни Enter за да продължиш..."},
-    {"Invalid input!", "Невалидни данни!"}
+    {"Invalid input!", "Невалидни данни!"},
+    {"View mode:", "Режим на преглед:"},
+    {"0. Show all", "0. Виж всички"},
+    {"1. Filter by date", "1. Филтриране по дата"},
+    {"Start year: ", "Начална година: "},
+    {"Start month (1-12): ", "Начален месец (1-12): "},
+    {"Start day (1-31): ", "Начален ден (1-31): "},
+    {"End year: ", "Крайна година: "},
+    {"End month (1-12): ", "Краен месец (1-12): "},
+    {"End day (1-31): ", "Краен ден (1-31): "},
+    {"End date is before start date!", "Крайната дата е преди началната!"},
+    {"ID", "ИД"},
+    {"Date", "Дата"},
+    {"Amount", "Сума"},
+    {"+/-", "+/-"},
+    {"Category", "Категория"},
+    {"Invalid date!", "Невалидна дата!"}
 };
 
 // Category names
@@ -152,6 +194,10 @@ const char* get_string(StringID id);
 void get_current_date(char* buffer);
 float convert_currency(float amount, Currency from, Currency to);
 void wait_for_enter(void);
+int is_date_in_range(const char* date, DateRange range);
+void input_date_range(DateRange* range);
+int input_int_range(const char* prompt, int min, int max);
+int is_valid_date(int year, int month, int day);
 
 int main(void) {
     initialize_settings();
@@ -374,20 +420,54 @@ printf("\n%s\n", get_string(TRANSACTION_ADDED));
 printf("%s\n", get_string(PRESS_ENTER));
 }
 
+int is_date_in_range(const char* date, DateRange r) {
+    int y, m, d;
+    sscanf(date, "%d-%d-%d", &y, &m, &d);
+
+    int start = r.from_year * 10000 + r.from_month * 100 + r.from_day;
+    int end   = r.to_year   * 10000 + r.to_month   * 100 + r.to_day;
+    int curr  = y * 10000 + m * 100 + d;
+
+    return curr >= start && curr <= end;
+}
+
 void view_transactions() {
-    printf("\n═══════════════════════════════════════════════════════════════\n");
+    printf("\n══════════════════════════════════════════════════\n");
     printf("%s\n", get_string(ALL_TRANSACTIONS));
-    printf("═══════════════════════════════════════════════════════════════\n");
-    
+    printf("══════════════════════════════════════════════════\n");
+
     if (transaction_count == 0) {
         printf("%s\n", get_string(NO_TRANSACTIONS));
         printf("%s\n", get_string(PRESS_ENTER));
         return;
     }
-    
+
+    printf("\n%s\n", get_string(FILTER_CHOICE));
+    printf("%s\n", get_string(SHOW_ALL_OPTION));
+    printf("%s\n", get_string(FILTER_OPTION));
+
+    int mode = input_int_range(get_string(ENTER_CHOICE), 0, 1);
+
+    DateRange range;
+    if (mode == FILTER_BY_DATE) {
+        input_date_range(&range);
+    }
+
+    int found = 0;
     for (int i = 0; i < transaction_count; i++) {
+        if (mode == FILTER_BY_DATE &&
+            !is_date_in_range(transactions[i].date, range))
+            continue;
+
         Transaction t = transactions[i];
-        printf("\n[%d] %s | %.2f %s | %s | %s",
+        if(found == 0){
+           printf("[%s]   %s    |    %s   | %s | %s \n", get_string(ID_TEXT), get_string(DATE_TEXT),
+           get_string(AMOUNT_TEXT), get_string(TYPE_TEXT), get_string(CATEGORY_TEXT));
+           found = 1;
+        }
+        
+
+        printf("[%d] %s | %.2f %s | %s | %s\n",
                t.id,
                t.date,
                t.amount,
@@ -395,7 +475,11 @@ void view_transactions() {
                t.type == INCOME ? "+" : "-",
                category_names[t.category][settings.language]);
     }
-    printf("\n");
+
+    if (!found) {
+        printf("%s\n", get_string(NO_TRANSACTIONS));
+    }
+
     printf("%s\n", get_string(PRESS_ENTER));
 }
 
@@ -410,60 +494,73 @@ float convert_currency(float amount, Currency from, Currency to) {
 }
 
 void view_summary() {
-    printf("\n═══════════════════════════════════════════════════════════════\n");
+    printf("\n══════════════════════════════════════════════════\n");
     const char* summary_title = (settings.language == ENGLISH) ? "Summary" : "Обобщение";
     printf("%s\n", summary_title);
-    printf("═══════════════════════════════════════════════════════════════\n");
-    
+    printf("══════════════════════════════════════════════════\n");
+
+    // --- Избор на филтър ---
+    printf("\n%s\n", get_string(FILTER_CHOICE));
+    printf("%s\n", get_string(SHOW_ALL_OPTION));
+    printf("%s\n", get_string(FILTER_OPTION));
+
+    int mode = input_int_range(get_string(ENTER_CHOICE), 0, 1);
+
+    DateRange range;
+    if (mode == FILTER_BY_DATE) {
+        input_date_range(&range);
+    }
+
     float total_income_eur = 0, total_expense_eur = 0;
-    
+
+    // --- Сумиране на приходи и разходи ---
     for (int i = 0; i < transaction_count; i++) {
-        float amount_eur = convert_currency(transactions[i].amount, 
-                                           transactions[i].currency, 
-                                           EUR);
-        
+        if (mode == FILTER_BY_DATE && !is_date_in_range(transactions[i].date, range))
+            continue;
+
+        float amount_eur = convert_currency(transactions[i].amount, transactions[i].currency, EUR);
+
         if (transactions[i].type == INCOME) {
             total_income_eur += amount_eur;
         } else {
             total_expense_eur += amount_eur;
         }
     }
-    
-    float balance = total_income_eur - total_expense_eur;
-    
-    printf("\n%s %.2f EUR (%.2f BGN)\n", get_string(TOTAL_INCOME), 
-           total_income_eur, 
-           convert_currency(total_income_eur, EUR, BGN));
-    
-    printf("%s %.2f EUR (%.2f BGN)\n", get_string(TOTAL_EXPENSES), 
-           total_expense_eur, 
-           convert_currency(total_expense_eur, EUR, BGN));
-    
-    printf("\n%s %.2f EUR (%.2f BGN)\n", get_string(BALANCE), 
-           balance, 
-           convert_currency(balance, EUR, BGN));
-    
+
+    float balance_eur = total_income_eur - total_expense_eur;
+
+    // --- Извеждане на приходи, разходи и баланс ---
+    printf("\n%s %.2f EUR (%.2f BGN)\n", get_string(TOTAL_INCOME),
+           total_income_eur, convert_currency(total_income_eur, EUR, BGN));
+    printf("%s %.2f EUR (%.2f BGN)\n", get_string(TOTAL_EXPENSES),
+           total_expense_eur, convert_currency(total_expense_eur, EUR, BGN));
+    printf("%s %.2f EUR (%.2f BGN)\n", get_string(BALANCE),
+           balance_eur, convert_currency(balance_eur, EUR, BGN));
+
+    // --- Разходи по категории ---
     if (total_expense_eur > 0) {
         const char* expenses_title = (settings.language == ENGLISH) ? "\n--- Expenses by Category ---\n" : "\n--- Разходи по категория ---\n";
         printf("%s\n", expenses_title);
-        for (int cat = 0; cat < 6; cat++) {
+
+        for (int cat = 0; cat <= OTHER; cat++) {
             float cat_total = 0;
             for (int i = 0; i < transaction_count; i++) {
-                if (transactions[i].type == EXPENSE && transactions[i].category == cat) {
-                    cat_total += convert_currency(transactions[i].amount, 
-                                                 transactions[i].currency, 
-                                                 EUR);
+                if (transactions[i].type == EXPENSE &&
+                    transactions[i].category == cat &&
+                    (mode == SHOW_ALL || is_date_in_range(transactions[i].date, range))) {
+                    cat_total += convert_currency(transactions[i].amount, transactions[i].currency, EUR);
                 }
             }
+
             if (cat_total > 0) {
                 float percentage = (cat_total / total_expense_eur) * 100;
-                printf("%s: %.2f EUR (%.1f%%)\n", 
-                       category_names[cat][settings.language], 
-                       cat_total, 
-                       percentage);
+                printf("%s: %.2f EUR (%.1f%%)\n",
+                       category_names[cat][settings.language],
+                       cat_total, percentage);
             }
         }
     }
+
     printf("%s\n", get_string(PRESS_ENTER));
 }
 
@@ -521,4 +618,61 @@ void settings_menu() {
 void wait_for_enter() {
     int c;
     while ((c = getchar()) != '\n' && c != EOF);
+}
+int input_int_range(const char* prompt, int min, int max) {
+    int x;
+    while (1) {
+        printf("%s", prompt);
+        if (scanf("%d", &x) != 1 || x < min || x > max) {
+            while (getchar() != '\n');
+            printf("%s\n", get_string(INVALID_INPUT));
+            continue;
+        }
+        while (getchar() != '\n');
+        return x;
+    }
+}
+void input_date_range(DateRange* r) {
+    while (1) {
+        r->from_year  = input_int_range(get_string(ENTER_FROM_YEAR), 1900, 2100);
+        r->from_month = input_int_range(get_string(ENTER_FROM_MONTH), 1, 12);
+        r->from_day   = input_int_range(get_string(ENTER_FROM_DAY), 1, 31);
+
+        if (!is_valid_date(r->from_year, r->from_month, r->from_day)) {
+        printf("%s\n", get_string(INVALID_DATE));
+        continue;
+        }
+
+        r->to_year  = input_int_range(get_string(ENTER_TO_YEAR), 1900, 2100);
+        r->to_month = input_int_range(get_string(ENTER_TO_MONTH), 1, 12);
+        r->to_day   = input_int_range(get_string(ENTER_TO_DAY), 1, 31);
+        if (!is_valid_date(r->to_year, r->to_month, r->to_day)) {
+        printf("%s\n", get_string(INVALID_DATE));
+        continue;
+        }
+
+        int start = r->from_year * 10000 + r->from_month * 100 + r->from_day;
+        int end   = r->to_year   * 10000 + r->to_month   * 100 + r->to_day;
+
+        if (end < start) {
+            printf("%s\n", get_string(END_DATE_BEFORE_START));
+            continue;
+        }
+        break;
+    }
+}
+int is_valid_date(int year, int month, int day) {
+    if (month < 1 || month > 12 || day < 1) return 0;
+
+    int days_in_month[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+
+    // Check leap year for February
+    if (month == 2) {
+        int leap = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+        if (leap) days_in_month[1] = 29;
+    }
+
+    if (day > days_in_month[month - 1]) return 0;
+
+    return 1;
 }
