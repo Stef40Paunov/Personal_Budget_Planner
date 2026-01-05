@@ -61,6 +61,7 @@ typedef enum {
     BALANCE,
     SETTINGS_MENU,
     CHANGE_LANGUAGE,
+    SET_BUDGET_LIMITS,
     BACK_TO_MENU,
     CURRENT_LANGUAGE,
     LANG_ENGLISH,
@@ -84,7 +85,15 @@ typedef enum {
     AMOUNT_TEXT,
     TYPE_TEXT,
     CATEGORY_TEXT,
-    INVALID_DATE
+    INVALID_DATE, 
+    SET_LIMITS_PROMPT, 
+    TOTAL_LIMIT_PROMPT,
+    TOTAL_LIMIT_EXCEEDED,
+    CATEGORY_LIMIT_EXCEEDED,
+    EXCHANGE_RATE_TEXT,
+    CURRENT_BUDGET_LIMITS,
+    CURRENT_TOTAL_LIMIT,
+    CURRENT_CATEGORY_LIMIT
 } StringID;
 
 typedef enum {
@@ -112,10 +121,16 @@ typedef struct {
     int to_year, to_month, to_day;
 } DateRange;
 
+typedef struct {
+    float category_limits[OTHER + 1]; // Лимити за всяка категория разходи
+    float total_limit;                // Общ лимит за всички разходи
+} BudgetLimits;
+
 // Global variables
 Transaction transactions[MAX_TRANSACTIONS];
 int transaction_count = 0;
 UserSettings settings;
+BudgetLimits budget_limits;
 
 // Multi-language strings
 const char* menu_strings[][2] = {
@@ -141,7 +156,8 @@ const char* menu_strings[][2] = {
     {"Balance:", "Баланс:"},
     {"Settings Menu", "Меню Настройки"},
     {"1. Change Language", "1. Смени Език"},
-    {"2. Back to Main Menu", "2. Обратно към Главното Меню"},
+    {"2. Set Budget Limits", "2. Настрой Лимити"},
+    {"3. Back to Main Menu", "3. Обратно към Главното Меню"},
     {"Current Language: ", "Текущ Език: "},
     {"English", "Английски"},
     {"Bulgarian", "Български"},
@@ -164,7 +180,15 @@ const char* menu_strings[][2] = {
     {"Amount", "Сума"},
     {"+/-", "+/-"},
     {"Category", "Категория"},
-    {"Invalid date!", "Невалидна дата!"}
+    {"Invalid date!", "Невалидна дата!"},
+    {"Set Budget Limits", "Настрой Лимити"},
+    {"Enter total budget limit (0 = no limit): ", "Общ лимит (0 = няма лимит): "},
+    {"Total budget limit exceeded!", "Общият лимит е надвишен!"},
+    {"Category budget limit exceeded!", "Лимитът за тази категория е надвишен!"},
+    {"Exchange Rate (1 EUR = 1.95583 BGN)", "Обменен курс (1 EUR = 1.95583 BGN)"},
+    {"Current Budget Limits", "Текущи Бюджетни Лимити"},
+    {"Total limit: %.2f EUR\n", "Общ лимит: %.2f EUR\n"},
+    {"%s limit: %.2f EUR\n", "%s лимит: %.2f EUR\n"}
 };
 
 // Category names
@@ -198,10 +222,14 @@ int is_date_in_range(const char* date, DateRange range);
 void input_date_range(DateRange* range);
 int input_int_range(const char* prompt, int min, int max);
 int is_valid_date(int year, int month, int day);
+void load_budget_limits();
+void save_budget_limits();
+float input_positive_float(const char* prompt);
 
 int main(void) {
     initialize_settings();
     load_data();
+    load_budget_limits();
     
     int choice;
     
@@ -411,7 +439,40 @@ while (1){
     break;
 }
 new_trans.category = (Category) cat_input;
-    
+
+//Добавяме проверката за лимити
+if (new_trans.type == EXPENSE) {
+    // Проверка общ лимит
+    float total_expenses = 0;
+    for (int i = 0; i < transaction_count; i++) {
+        if (transactions[i].type == EXPENSE) {
+            total_expenses += convert_currency(transactions[i].amount, transactions[i].currency, EUR);
+        }
+    }
+    float new_amount_eur = convert_currency(new_trans.amount, new_trans.currency, EUR);
+    if (budget_limits.total_limit > 0 && (total_expenses + new_amount_eur) > budget_limits.total_limit) {
+        printf("%s\n", get_string(TOTAL_LIMIT_EXCEEDED));
+        printf("%s", get_string(PRESS_ENTER));
+        wait_for_enter();
+        return; // Спира добавянето на транзакцията
+    }
+
+    // Проверка лимит по категория
+    float cat_total = 0;
+    for (int i = 0; i < transaction_count; i++) {
+        if (transactions[i].type == EXPENSE && transactions[i].category == new_trans.category) {
+            cat_total += convert_currency(transactions[i].amount, transactions[i].currency, EUR);
+        }
+    }
+    if (budget_limits.category_limits[new_trans.category] > 0 &&
+        (cat_total + new_amount_eur) > budget_limits.category_limits[new_trans.category]) {
+        printf("%s\n", get_string(CATEGORY_LIMIT_EXCEEDED));
+        printf("%s", get_string(PRESS_ENTER));
+        wait_for_enter();
+        return; // Спира добавянето на транзакцията
+    }
+}
+
 while(getchar() != '\n');
 
 transactions[transaction_count++] = new_trans;
@@ -573,11 +634,17 @@ void settings_menu() {
         printf("%s\n", get_string(SETTINGS_MENU));
         printf("═══════════════════════════════════════\n\n");
         printf("%s\n", get_string(CHANGE_LANGUAGE));
+        printf("%s\n", get_string(SET_BUDGET_LIMITS));
         printf("%s\n\n", get_string(BACK_TO_MENU));
         
-        printf("%s%s\n", get_string(CURRENT_LANGUAGE), 
-               get_string(LANG_ENGLISH + settings.language));
-        printf("Exchange Rate: 1 EUR = %.5f BGN (Fixed)\n\n", EXCHANGE_RATE);
+        printf("%s%s\n", get_string(CURRENT_LANGUAGE), get_string(LANG_ENGLISH + settings.language));
+        printf("%s\n\n", get_string(EXCHANGE_RATE_TEXT));
+        printf("%s\n", get_string(CURRENT_BUDGET_LIMITS));
+        printf(get_string(CURRENT_TOTAL_LIMIT), budget_limits.total_limit);
+        for (int i = 0; i <= OTHER; i++) {
+            printf(get_string(CURRENT_CATEGORY_LIMIT), category_names[i][settings.language], budget_limits.category_limits[i]); 
+        }
+        printf("\n");
         
         printf("%s", get_string(ENTER_CHOICE));
         if (scanf("%d", &choice) != 1) {
@@ -604,7 +671,26 @@ void settings_menu() {
                 }
                 break;
             }
-            case 2:
+            case 2: {
+                // --- Настройка на лимити ---
+                printf("\n%s\n", get_string(SET_LIMITS_PROMPT));
+
+                // Общ лимит
+                budget_limits.total_limit = input_positive_float(get_string(TOTAL_LIMIT_PROMPT));
+
+                // Лимити по категории
+                for (int i = 0; i <= OTHER; i++) {
+                    char prompt[MAX_STRING];
+                    sprintf(prompt, "%s: ", category_names[i][settings.language]);
+                    budget_limits.category_limits[i] = input_positive_float(prompt);
+                }
+
+                save_budget_limits(); 
+                printf("%s\n", get_string(PRESS_ENTER)); 
+                wait_for_enter(); 
+                break;
+            }
+            case 3:
                 save_settings();
                 printf("%s", get_string(PRESS_ENTER));
                 return;
@@ -615,10 +701,26 @@ void settings_menu() {
         }
     }
 }
+
+float input_positive_float(const char* prompt) {
+    float x;
+    while (1) {
+        printf("%s", prompt);
+        if (scanf("%f", &x) != 1 || x < 0) {
+            while (getchar() != '\n');  // изчистваме буфера
+            printf("%s\n", get_string(INVALID_INPUT)); // "Невалидни данни!"
+            continue; // връща потребителя да въвежда отново
+        }
+        while (getchar() != '\n'); // премахваме остатъчен Enter
+        return x;
+    }
+}
+
 void wait_for_enter() {
     int c;
     while ((c = getchar()) != '\n' && c != EOF);
 }
+
 int input_int_range(const char* prompt, int min, int max) {
     int x;
     while (1) {
@@ -675,4 +777,26 @@ int is_valid_date(int year, int month, int day) {
     if (day > days_in_month[month - 1]) return 0;
 
     return 1;
+}
+void load_budget_limits() {
+    FILE* file = fopen("budget_limits.txt", "r");
+    if (!file) return;
+
+    fscanf(file, "%f", &budget_limits.total_limit);
+    for (int i = 0; i <= OTHER; i++) {
+        fscanf(file, "%f", &budget_limits.category_limits[i]);
+    }
+
+    fclose(file);
+}
+void save_budget_limits() {
+    FILE* file = fopen("budget_limits.txt", "w");
+    if (!file) return;
+
+    fprintf(file, "%.2f\n", budget_limits.total_limit);
+    for (int i = 0; i <= OTHER; i++) {
+        fprintf(file, "%.2f\n", budget_limits.category_limits[i]);
+    }
+
+    fclose(file);
 }
