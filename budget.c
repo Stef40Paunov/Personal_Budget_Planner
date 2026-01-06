@@ -4,8 +4,10 @@
 #include <time.h>
 
 #define MAX_TRANSACTIONS 1000
+#define MAX_RECURRING 100
 #define MAX_STRING 100
 #define DATA_FILE "budget_data.txt"
+#define RECURRING_FILE "recurring_data.txt"
 #define CONFIG_FILE "config.txt"
 #define EXCHANGE_RATE 1.95583 // Fixed EUR to BGN rate
 
@@ -36,6 +38,14 @@ typedef enum {
     SALARY,
     OTHER
 } Category;
+
+// Recurrence type
+typedef enum {
+    DAILY = 0,
+    WEEKLY = 1,
+    MONTHLY = 2,
+    YEARLY = 3
+} RecurrenceType;
 
 // String IDs for multi-language support
 typedef enum {
@@ -93,7 +103,12 @@ typedef enum {
     EXCHANGE_RATE_TEXT,
     CURRENT_BUDGET_LIMITS,
     CURRENT_TOTAL_LIMIT,
-    CURRENT_CATEGORY_LIMIT
+    CURRENT_CATEGORY_LIMIT,
+    IS_RECURRING_PROMPT,
+    RECURRENCE_TYPE_PROMPT,
+    RECURRENCE_OPTIONS,
+    RECURRING_ADDED,
+    RECURRING_PROCESSED
 } StringID;
 
 typedef enum {
@@ -111,6 +126,19 @@ typedef struct {
     Category category;
 } Transaction;
 
+// Recurring transaction structure
+typedef struct {
+    int id;
+    char start_date[11];
+    char last_processed[11];
+    float amount;
+    Currency currency;
+    TransactionType type;
+    Category category;
+    RecurrenceType recurrence;
+    int active; // 1 = active, 0 = inactive
+} RecurringTransaction;
+
 // User settings structure
 typedef struct {
     Language language;
@@ -122,13 +150,15 @@ typedef struct {
 } DateRange;
 
 typedef struct {
-    float category_limits[OTHER + 1]; // Лимити за всяка категория разходи
-    float total_limit;                // Общ лимит за всички разходи
+    float category_limits[OTHER + 1];
+    float total_limit;
 } BudgetLimits;
 
 // Global variables
 Transaction transactions[MAX_TRANSACTIONS];
 int transaction_count = 0;
+RecurringTransaction recurring_transactions[MAX_RECURRING];
+int recurring_count = 0;
 UserSettings settings;
 BudgetLimits budget_limits;
 
@@ -188,7 +218,12 @@ const char* menu_strings[][2] = {
     {"Exchange Rate (1 EUR = 1.95583 BGN)", "Обменен курс (1 EUR = 1.95583 BGN)"},
     {"Current Budget Limits", "Текущи Бюджетни Лимити"},
     {"Total limit: %.2f EUR\n", "Общ лимит: %.2f EUR\n"},
-    {"%s limit: %.2f EUR\n", "%s лимит: %.2f EUR\n"}
+    {"%s limit: %.2f EUR\n", "%s лимит: %.2f EUR\n"},
+    {"Is this a recurring transaction? (0=No, 1=Yes): ", "Повтаряща се транзакция? (0=Не, 1=Да): "},
+    {"Recurrence type:", "Тип повторение:"},
+    {"0=Daily, 1=Weekly, 2=Monthly, 3=Yearly", "0=Дневно, 1=Седмично, 2=Месечно, 3=Годишно"},
+    {"Recurring transaction added!", "Повтаряща се транзакция добавена!"},
+    {"Recurring transactions processed!", "Повтарящите се транзакции са обработени!"}
 };
 
 // Category names
@@ -225,11 +260,20 @@ int is_valid_date(int year, int month, int day);
 void load_budget_limits();
 void save_budget_limits();
 float input_positive_float(const char* prompt);
+void load_recurring_transactions();
+void save_recurring_transactions();
+void process_recurring_transactions();
+void add_next_date(char* current_date, RecurrenceType type, char* next_date);
+int compare_dates(const char* date1, const char* date2);
 
 int main(void) {
     initialize_settings();
     load_data();
     load_budget_limits();
+    load_recurring_transactions();
+    
+    // Process recurring transactions on startup
+    process_recurring_transactions();
     
     int choice;
     
@@ -239,13 +283,13 @@ int main(void) {
         printf("%s", get_string(ENTER_CHOICE));
         
         if (scanf("%d", &choice) != 1) {
-            while(getchar() != '\n'); // Clear input buffer
+            while(getchar() != '\n');
             printf("%s\n", get_string(INVALID_CHOICE));
             printf("%s", get_string(PRESS_ENTER));
             wait_for_enter();
             continue;
         }
-        while(getchar() != '\n'); // Clear newline
+        while(getchar() != '\n');
         
         switch(choice) {
             case 1:
@@ -262,6 +306,7 @@ int main(void) {
                 break;
             case 5:
                 save_data();
+                save_recurring_transactions();
                 return 0;
             default:
                 printf("%s\n", get_string(INVALID_CHOICE));
@@ -277,7 +322,6 @@ int main(void) {
 void initialize_settings() {
     settings.language = ENGLISH;
     
-    // Try to load settings from config file
     FILE* file = fopen(CONFIG_FILE, "r");
     if (file != NULL) {
         fscanf(file, "%d", (int*)&settings.language);
@@ -296,7 +340,7 @@ void save_settings() {
 void load_data() {
     FILE* file = fopen(DATA_FILE, "r");
     if (file == NULL) {
-        return; // No data file yet
+        return;
     }
     
     transaction_count = 0;
@@ -335,6 +379,138 @@ void save_data() {
     save_settings();
 }
 
+void load_recurring_transactions() {
+    FILE* file = fopen(RECURRING_FILE, "r");
+    if (file == NULL) {
+        return;
+    }
+    
+    recurring_count = 0;
+    while (fscanf(file, "%d %s %s %f %d %d %d %d %d",
+                  &recurring_transactions[recurring_count].id,
+                  recurring_transactions[recurring_count].start_date,
+                  recurring_transactions[recurring_count].last_processed,
+                  &recurring_transactions[recurring_count].amount,
+                  (int*)&recurring_transactions[recurring_count].currency,
+                  (int*)&recurring_transactions[recurring_count].type,
+                  (int*)&recurring_transactions[recurring_count].category,
+                  (int*)&recurring_transactions[recurring_count].recurrence,
+                  &recurring_transactions[recurring_count].active) == 9) {
+        recurring_count++;
+        if (recurring_count >= MAX_RECURRING) break;
+    }
+    
+    fclose(file);
+}
+
+void save_recurring_transactions() {
+    FILE* file = fopen(RECURRING_FILE, "w");
+    if (file == NULL) {
+        return;
+    }
+    
+    for (int i = 0; i < recurring_count; i++) {
+        fprintf(file, "%d %s %s %.2f %d %d %d %d %d\n",
+                recurring_transactions[i].id,
+                recurring_transactions[i].start_date,
+                recurring_transactions[i].last_processed,
+                recurring_transactions[i].amount,
+                recurring_transactions[i].currency,
+                recurring_transactions[i].type,
+                recurring_transactions[i].category,
+                recurring_transactions[i].recurrence,
+                recurring_transactions[i].active);
+    }
+    
+    fclose(file);
+}
+
+int compare_dates(const char* date1, const char* date2) {
+    int y1, m1, d1, y2, m2, d2;
+    sscanf(date1, "%d-%d-%d", &y1, &m1, &d1);
+    sscanf(date2, "%d-%d-%d", &y2, &m2, &d2);
+    
+    int val1 = y1 * 10000 + m1 * 100 + d1;
+    int val2 = y2 * 10000 + m2 * 100 + d2;
+    
+    if (val1 < val2) return -1;
+    if (val1 > val2) return 1;
+    return 0;
+}
+
+void add_next_date(char* current_date, RecurrenceType type, char* next_date) {
+    int y, m, d;
+    sscanf(current_date, "%d-%d-%d", &y, &m, &d);
+    
+    struct tm date = {0};
+    date.tm_year = y - 1900;
+    date.tm_mon = m - 1;
+    date.tm_mday = d;
+    
+    time_t t = mktime(&date);
+    
+    switch(type) {
+        case DAILY:
+            t += 24 * 60 * 60;
+            break;
+        case WEEKLY:
+            t += 7 * 24 * 60 * 60;
+            break;
+        case MONTHLY:
+            t += 30 * 24 * 60 * 60;
+            break;
+        case YEARLY:
+            t += 365 * 24 * 60 * 60;
+            break;
+    }
+    
+    struct tm* new_date = localtime(&t);
+    sprintf(next_date, "%04d-%02d-%02d", 
+            new_date->tm_year + 1900, 
+            new_date->tm_mon + 1, 
+            new_date->tm_mday);
+}
+
+void process_recurring_transactions() {
+    char today[11];
+    get_current_date(today);
+    
+    int added = 0;
+    
+    for (int i = 0; i < recurring_count; i++) {
+        if (!recurring_transactions[i].active) continue;
+        
+        char next_date[11];
+        strcpy(next_date, recurring_transactions[i].last_processed);
+        
+        while (1) {
+            add_next_date(next_date, recurring_transactions[i].recurrence, next_date);
+            
+            if (compare_dates(next_date, today) > 0) break;
+            
+            if (transaction_count >= MAX_TRANSACTIONS) break;
+            
+            Transaction new_trans;
+            new_trans.id = transaction_count + 1;
+            strcpy(new_trans.date, next_date);
+            new_trans.amount = recurring_transactions[i].amount;
+            new_trans.currency = recurring_transactions[i].currency;
+            new_trans.type = recurring_transactions[i].type;
+            new_trans.category = recurring_transactions[i].category;
+            
+            transactions[transaction_count++] = new_trans;
+            strcpy(recurring_transactions[i].last_processed, next_date);
+            added++;
+        }
+    }
+    
+    if (added > 0) {
+        save_data();
+        save_recurring_transactions();
+        printf("\n%s\n", get_string(RECURRING_PROCESSED));
+    }
+}
+
 void clear_screen() {
     #ifdef _WIN32
         system("cls");
@@ -368,7 +544,6 @@ void add_transaction() {
     if (transaction_count >= MAX_TRANSACTIONS) {
         printf("%s\n", get_string(INVALID_INPUT));
         printf("%s\n", get_string(PRESS_ENTER));
-
         return;
     }
     
@@ -378,107 +553,144 @@ void add_transaction() {
     
     printf("\n%s", get_string(TYPE_PROMPT));
     int type_input;
-    while (1){
-    if (scanf("%d", &type_input) != 1 || (type_input != 0 && type_input != 1))
-    {
-        while (getchar() != '\n');
-        printf("%s\n", get_string(INVALID_INPUT));
-        printf("%s", get_string(TYPE_PROMPT));
-        continue;
-    }
-
+    while (1) {
+        if (scanf("%d", &type_input) != 1 || (type_input != 0 && type_input != 1)) {
+            while (getchar() != '\n');
+            printf("%s\n", get_string(INVALID_INPUT));
+            printf("%s", get_string(TYPE_PROMPT));
+            continue;
+        }
         break;
-
-}
+    }
     new_trans.type = (TransactionType)type_input;
     
     printf("%s", get_string(AMOUNT_PROMPT));
-
-    while (1){
-    if (scanf("%f", &new_trans.amount) != 1 || new_trans.amount <= 0)
-    {
-        while (getchar() != '\n');
-        printf("%s\n", get_string(INVALID_INPUT));
-        printf("%s", get_string(AMOUNT_PROMPT));
-        continue;
+    while (1) {
+        if (scanf("%f", &new_trans.amount) != 1 || new_trans.amount <= 0) {
+            while (getchar() != '\n');
+            printf("%s\n", get_string(INVALID_INPUT));
+            printf("%s", get_string(AMOUNT_PROMPT));
+            continue;
+        }
+        break;
     }
-    break;
-}
     
     printf("%s", get_string(CURRENCY_PROMPT));
-
-int curr_input;
-
-while (1){
-    if (scanf("%d", &curr_input) != 1 ||
-        (curr_input != 0 && curr_input != 1))
-    {
-        while (getchar() != '\n');
-        printf("%s\n", get_string(INVALID_INPUT));
-        printf("%s", get_string(CURRENCY_PROMPT));
-        continue;
+    int curr_input;
+    while (1) {
+        if (scanf("%d", &curr_input) != 1 || (curr_input != 0 && curr_input != 1)) {
+            while (getchar() != '\n');
+            printf("%s\n", get_string(INVALID_INPUT));
+            printf("%s", get_string(CURRENCY_PROMPT));
+            continue;
+        }
+        break;
     }
-     break;
-}
-new_trans.currency = (Currency) curr_input;
+    new_trans.currency = (Currency)curr_input;
     
-printf("\n%s\n", get_string(CATEGORY_PROMPT));
-printf("%s\n", get_string(CATEGORY_OPTIONS));
-int cat_input;
-
-while (1){
-    if (scanf("%d", &cat_input) != 1 ||
-        cat_input < 0 || cat_input > 5)
-    {
-        while (getchar() != '\n');
-        printf("%s\n", get_string(INVALID_INPUT));
-        printf("\n%s\n", get_string(CATEGORY_PROMPT));
-        printf("%s\n", get_string(CATEGORY_OPTIONS));
-        continue;
+    printf("\n%s\n", get_string(CATEGORY_PROMPT));
+    printf("%s\n", get_string(CATEGORY_OPTIONS));
+    int cat_input;
+    while (1) {
+        if (scanf("%d", &cat_input) != 1 || cat_input < 0 || cat_input > 5) {
+            while (getchar() != '\n');
+            printf("%s\n", get_string(INVALID_INPUT));
+            printf("\n%s\n", get_string(CATEGORY_PROMPT));
+            printf("%s\n", get_string(CATEGORY_OPTIONS));
+            continue;
+        }
+        break;
     }
-    break;
-}
-new_trans.category = (Category) cat_input;
+    new_trans.category = (Category)cat_input;
 
-//Добавяме проверката за лимити
-if (new_trans.type == EXPENSE) {
-    // Проверка общ лимит
-    float total_expenses = 0;
-    for (int i = 0; i < transaction_count; i++) {
-        if (transactions[i].type == EXPENSE) {
-            total_expenses += convert_currency(transactions[i].amount, transactions[i].currency, EUR);
+    // Budget limit checks
+    if (new_trans.type == EXPENSE) {
+        float total_expenses = 0;
+        for (int i = 0; i < transaction_count; i++) {
+            if (transactions[i].type == EXPENSE) {
+                total_expenses += convert_currency(transactions[i].amount, transactions[i].currency, EUR);
+            }
+        }
+        float new_amount_eur = convert_currency(new_trans.amount, new_trans.currency, EUR);
+        if (budget_limits.total_limit > 0 && (total_expenses + new_amount_eur) > budget_limits.total_limit) {
+            printf("%s\n", get_string(TOTAL_LIMIT_EXCEEDED));
+            printf("%s", get_string(PRESS_ENTER));
+            wait_for_enter();
+            return;
+        }
+        
+        float cat_total = 0;
+        for (int i = 0; i < transaction_count; i++) {
+            if (transactions[i].type == EXPENSE && transactions[i].category == new_trans.category) {
+                cat_total += convert_currency(transactions[i].amount, transactions[i].currency, EUR);
+            }
+        }
+        if (budget_limits.category_limits[new_trans.category] > 0 &&
+            (cat_total + new_amount_eur) > budget_limits.category_limits[new_trans.category]) {
+            printf("%s\n", get_string(CATEGORY_LIMIT_EXCEEDED));
+            printf("%s", get_string(PRESS_ENTER));
+            wait_for_enter();
+            return;
         }
     }
-    float new_amount_eur = convert_currency(new_trans.amount, new_trans.currency, EUR);
-    if (budget_limits.total_limit > 0 && (total_expenses + new_amount_eur) > budget_limits.total_limit) {
-        printf("%s\n", get_string(TOTAL_LIMIT_EXCEEDED));
-        printf("%s", get_string(PRESS_ENTER));
-        wait_for_enter();
-        return; // Спира добавянето на транзакцията
-    }
+    
+    while(getchar() != '\n');
+    
+    transactions[transaction_count++] = new_trans;
+    
+    printf("\n%s\n", get_string(TRANSACTION_ADDED));
 
-    // Проверка лимит по категория
-    float cat_total = 0;
-    for (int i = 0; i < transaction_count; i++) {
-        if (transactions[i].type == EXPENSE && transactions[i].category == new_trans.category) {
-            cat_total += convert_currency(transactions[i].amount, transactions[i].currency, EUR);
+        // Ask if recurring
+    printf("\n%s", get_string(IS_RECURRING_PROMPT));
+    int is_recurring;
+    while (1) {
+        if (scanf("%d", &is_recurring) != 1 || (is_recurring != 0 && is_recurring != 1)) {
+            while (getchar() != '\n');
+            printf("%s\n", get_string(INVALID_INPUT));
+            printf("%s", get_string(IS_RECURRING_PROMPT));
+            continue;
         }
+        break;
     }
-    if (budget_limits.category_limits[new_trans.category] > 0 &&
-        (cat_total + new_amount_eur) > budget_limits.category_limits[new_trans.category]) {
-        printf("%s\n", get_string(CATEGORY_LIMIT_EXCEEDED));
-        printf("%s", get_string(PRESS_ENTER));
-        wait_for_enter();
-        return; // Спира добавянето на транзакцията
+    
+    if (is_recurring) {
+        if (recurring_count >= MAX_RECURRING) {
+            printf("%s\n", get_string(INVALID_INPUT));
+            while(getchar() != '\n');
+            return;
+        }
+        
+        printf("\n%s\n", get_string(RECURRENCE_TYPE_PROMPT));
+        printf("%s\n", get_string(RECURRENCE_OPTIONS));
+        int rec_input;
+        while (1) {
+            if (scanf("%d", &rec_input) != 1 || rec_input < 0 || rec_input > 3) {
+                while (getchar() != '\n');
+                printf("%s\n", get_string(INVALID_INPUT));
+                printf("\n%s\n", get_string(RECURRENCE_TYPE_PROMPT));
+                printf("%s\n", get_string(RECURRENCE_OPTIONS));
+                continue;
+            }
+            break;
+        }
+        
+        RecurringTransaction rec_trans;
+        rec_trans.id = recurring_count + 1;
+        strcpy(rec_trans.start_date, new_trans.date);
+        strcpy(rec_trans.last_processed, new_trans.date);
+        rec_trans.amount = new_trans.amount;
+        rec_trans.currency = new_trans.currency;
+        rec_trans.type = new_trans.type;
+        rec_trans.category = new_trans.category;
+        rec_trans.recurrence = (RecurrenceType)rec_input;
+        rec_trans.active = 1;
+        
+        recurring_transactions[recurring_count++] = rec_trans;
+        
+        printf("\n%s\n", get_string(RECURRING_ADDED));
     }
-}
-
-while(getchar() != '\n');
-
-transactions[transaction_count++] = new_trans;
-
-printf("\n%s\n", get_string(TRANSACTION_ADDED));
-printf("%s\n", get_string(PRESS_ENTER));
+    printf("%s\n", get_string(PRESS_ENTER));
+    wait_for_enter();
 }
 
 int is_date_in_range(const char* date, DateRange r) {
@@ -516,8 +728,7 @@ void view_transactions() {
 
     int found = 0;
     for (int i = 0; i < transaction_count; i++) {
-        if (mode == FILTER_BY_DATE &&
-            !is_date_in_range(transactions[i].date, range))
+        if (mode == FILTER_BY_DATE && !is_date_in_range(transactions[i].date, range))
             continue;
 
         Transaction t = transactions[i];
@@ -526,7 +737,6 @@ void view_transactions() {
            get_string(AMOUNT_TEXT), get_string(TYPE_TEXT), get_string(CATEGORY_TEXT));
            found = 1;
         }
-        
 
         printf("[%d] %s | %.2f %s | %s | %s\n",
                t.id,
@@ -549,7 +759,7 @@ float convert_currency(float amount, Currency from, Currency to) {
     
     if (from == EUR && to == BGN) {
         return amount * EXCHANGE_RATE;
-    } else { // from == BGN && to == EUR
+    } else {
         return amount / EXCHANGE_RATE;
     }
 }
@@ -560,7 +770,6 @@ void view_summary() {
     printf("%s\n", summary_title);
     printf("══════════════════════════════════════════════════\n");
 
-    // --- Избор на филтър ---
     printf("\n%s\n", get_string(FILTER_CHOICE));
     printf("%s\n", get_string(SHOW_ALL_OPTION));
     printf("%s\n", get_string(FILTER_OPTION));
@@ -574,7 +783,6 @@ void view_summary() {
 
     float total_income_eur = 0, total_expense_eur = 0;
 
-    // --- Сумиране на приходи и разходи ---
     for (int i = 0; i < transaction_count; i++) {
         if (mode == FILTER_BY_DATE && !is_date_in_range(transactions[i].date, range))
             continue;
@@ -590,7 +798,6 @@ void view_summary() {
 
     float balance_eur = total_income_eur - total_expense_eur;
 
-    // --- Извеждане на приходи, разходи и баланс ---
     printf("\n%s %.2f EUR (%.2f BGN)\n", get_string(TOTAL_INCOME),
            total_income_eur, convert_currency(total_income_eur, EUR, BGN));
     printf("%s %.2f EUR (%.2f BGN)\n", get_string(TOTAL_EXPENSES),
@@ -598,7 +805,6 @@ void view_summary() {
     printf("%s %.2f EUR (%.2f BGN)\n", get_string(BALANCE),
            balance_eur, convert_currency(balance_eur, EUR, BGN));
 
-    // --- Разходи по категории ---
     if (total_expense_eur > 0) {
         const char* expenses_title = (settings.language == ENGLISH) ? "\n--- Expenses by Category ---\n" : "\n--- Разходи по категория ---\n";
         printf("%s\n", expenses_title);
@@ -672,13 +878,10 @@ void settings_menu() {
                 break;
             }
             case 2: {
-                // --- Настройка на лимити ---
                 printf("\n%s\n", get_string(SET_LIMITS_PROMPT));
 
-                // Общ лимит
                 budget_limits.total_limit = input_positive_float(get_string(TOTAL_LIMIT_PROMPT));
 
-                // Лимити по категории
                 for (int i = 0; i <= OTHER; i++) {
                     char prompt[MAX_STRING];
                     sprintf(prompt, "%s: ", category_names[i][settings.language]);
@@ -707,11 +910,11 @@ float input_positive_float(const char* prompt) {
     while (1) {
         printf("%s", prompt);
         if (scanf("%f", &x) != 1 || x < 0) {
-            while (getchar() != '\n');  // изчистваме буфера
-            printf("%s\n", get_string(INVALID_INPUT)); // "Невалидни данни!"
-            continue; // връща потребителя да въвежда отново
+            while (getchar() != '\n');
+            printf("%s\n", get_string(INVALID_INPUT));
+            continue;
         }
-        while (getchar() != '\n'); // премахваме остатъчен Enter
+        while (getchar() != '\n');
         return x;
     }
 }
@@ -734,6 +937,7 @@ int input_int_range(const char* prompt, int min, int max) {
         return x;
     }
 }
+
 void input_date_range(DateRange* r) {
     while (1) {
         r->from_year  = input_int_range(get_string(ENTER_FROM_YEAR), 1900, 2100);
@@ -741,16 +945,17 @@ void input_date_range(DateRange* r) {
         r->from_day   = input_int_range(get_string(ENTER_FROM_DAY), 1, 31);
 
         if (!is_valid_date(r->from_year, r->from_month, r->from_day)) {
-        printf("%s\n", get_string(INVALID_DATE));
-        continue;
+            printf("%s\n", get_string(INVALID_DATE));
+            continue;
         }
 
         r->to_year  = input_int_range(get_string(ENTER_TO_YEAR), 1900, 2100);
         r->to_month = input_int_range(get_string(ENTER_TO_MONTH), 1, 12);
         r->to_day   = input_int_range(get_string(ENTER_TO_DAY), 1, 31);
+        
         if (!is_valid_date(r->to_year, r->to_month, r->to_day)) {
-        printf("%s\n", get_string(INVALID_DATE));
-        continue;
+            printf("%s\n", get_string(INVALID_DATE));
+            continue;
         }
 
         int start = r->from_year * 10000 + r->from_month * 100 + r->from_day;
@@ -763,12 +968,12 @@ void input_date_range(DateRange* r) {
         break;
     }
 }
+
 int is_valid_date(int year, int month, int day) {
     if (month < 1 || month > 12 || day < 1) return 0;
 
     int days_in_month[] = {31,28,31,30,31,30,31,31,30,31,30,31};
 
-    // Check leap year for February
     if (month == 2) {
         int leap = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
         if (leap) days_in_month[1] = 29;
@@ -778,6 +983,7 @@ int is_valid_date(int year, int month, int day) {
 
     return 1;
 }
+
 void load_budget_limits() {
     FILE* file = fopen("budget_limits.txt", "r");
     if (!file) return;
@@ -789,6 +995,7 @@ void load_budget_limits() {
 
     fclose(file);
 }
+
 void save_budget_limits() {
     FILE* file = fopen("budget_limits.txt", "w");
     if (!file) return;
